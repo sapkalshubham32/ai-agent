@@ -1,3 +1,5 @@
+Version 1
+
 # =============================================================================
 # OUTBOUND AI APPOINTMENT BOOKING AGENT
 # =============================================================================
@@ -381,20 +383,18 @@ async def entrypoint(ctx: agents.JobContext) -> None:
         # Wait for the SIP participant to fully join the LiveKit room (WebRTC).
         # wait_until_answered=True only signals SIP 200 OK at the signalling layer;
         # audio tracks are not live until wait_for_participant() returns.
-        sip_participant = await ctx.wait_for_participant(identity=f"sip_{phone_number}")
+        await ctx.wait_for_participant(identity=f"sip_{phone_number}")
         await _log("info", f"[OUTBOUND] SIP participant joined room — audio ready")
     else:
         # ── INBOUND: Caller rang one of our VoiceLink DIDs ────────────────────────
         await _log("info", f"[INBOUND] Inbound call received in room: {ctx.room.name}")
         import asyncio as _asyncio
         await _asyncio.sleep(1)
-        sip_participant = None
         for participant in ctx.room.remote_participants.values():
             attrs = getattr(participant, "attributes", {}) or {}
             sip_call_from = attrs.get("sip.callFrom") or attrs.get("sip.phoneNumber") or ""
             if sip_call_from:
                 phone_number = sip_call_from
-                sip_participant = participant
                 await _log("info", f"[INBOUND] Caller identified as: {phone_number}")
                 break
 
@@ -433,6 +433,7 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             agent=OutboundAssistant(instructions=system_prompt),
             room_input_options=_input_opts,
         )
+
     await session.start(**_session_kwargs)
     await _log("info", "Agent session started — AI ready, generating greeting")
 
