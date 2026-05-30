@@ -328,6 +328,22 @@ async def entrypoint(ctx: agents.JobContext) -> None:
     await _log("info", f"Connected to LiveKit room: {ctx.room.name}")
 
     # ------------------------------------------------------------------
+    # Pre-build AI session objects during ring time (no network I/O).
+    # session.start() is called only AFTER the call is answered so the
+    # Gemini Live WebSocket is not opened while the phone is ringing.
+    # ------------------------------------------------------------------
+    gemini_model = model_override or os.getenv("GEMINI_MODEL", "gemini-2.0-flash-live-001")
+    await _log("info", f"Pre-building AI session — model={gemini_model}")
+    active_tools = tool_ctx.build_tool_list(enabled_tools)
+    await _log("info", f"Tools loaded: {[t.__name__ for t in active_tools]}")
+    session = _build_session(
+        tools=active_tools,
+        system_prompt=system_prompt,
+        model_override=model_override,
+        voice_override=voice_override,
+    )
+
+    # ------------------------------------------------------------------
     # Outbound SIP dial — MUST happen before starting Gemini Live.
     # Gemini Live has a short idle timeout; if we start it before the
     # call is answered (~20-30s ring time) the session crashes silently
@@ -362,45 +378,30 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             ctx.shutdown()
             return
         await _log("info", f"[OUTBOUND] Call ANSWERED — {phone_number} picked up")
-
-        # wait_until_answered=True only confirms SIP 200 OK (signalling layer).
-        # The SIP participant joining the LiveKit room is a separate async event.
-        # We must wait for it here — otherwise session.start() and generate_reply()
-        # fire before the callee's audio track is present, causing a missed greeting.
-        await _log("info", "[OUTBOUND] Waiting for SIP participant to join room...")
-        try:
-            await ctx.wait_for_participant(identity=f"sip_{phone_number}")
-            await _log("info", "[OUTBOUND] SIP participant joined room — starting session")
-        except Exception as _wfp_exc:
-            await _log("error", f"[OUTBOUND] wait_for_participant failed: {_wfp_exc}")
-            ctx.shutdown()
-            return
+        # Wait for the SIP participant to fully join the LiveKit room (WebRTC).
+        # wait_until_answered=True only signals SIP 200 OK at the signalling layer;
+        # audio tracks are not live until wait_for_participant() returns.
+        sip_participant = await ctx.wait_for_participant(identity=f"sip_{phone_number}")
+        await _log("info", f"[OUTBOUND] SIP participant joined room — audio ready")
     else:
         # ── INBOUND: Caller rang one of our VoiceLink DIDs ────────────────────────
         await _log("info", f"[INBOUND] Inbound call received in room: {ctx.room.name}")
         import asyncio as _asyncio
         await _asyncio.sleep(1)
+        sip_participant = None
         for participant in ctx.room.remote_participants.values():
             attrs = getattr(participant, "attributes", {}) or {}
             sip_call_from = attrs.get("sip.callFrom") or attrs.get("sip.phoneNumber") or ""
             if sip_call_from:
                 phone_number = sip_call_from
+                sip_participant = participant
                 await _log("info", f"[INBOUND] Caller identified as: {phone_number}")
                 break
 
     # ------------------------------------------------------------------
-    # Build and start Gemini Live session AFTER the call is answered
+    # Start Gemini Live session — call is answered, SIP participant is in
+    # the room. Session object was pre-built above during ring time.
     # ------------------------------------------------------------------
-    gemini_model = model_override or os.getenv("GEMINI_MODEL", "gemini-2.0-flash-live-001")
-    await _log("info", f"Building AI session — model={gemini_model}")
-    active_tools = tool_ctx.build_tool_list(enabled_tools)
-    await _log("info", f"Tools loaded: {[t.__name__ for t in active_tools]}")
-    session = _build_session(
-        tools=active_tools,
-        system_prompt=system_prompt,
-        model_override=model_override,
-        voice_override=voice_override,
-    )
 
     # Noise cancellation: OFF by default for SIP/VoiceLink calls.
     # VoiceLink PSTN already processes audio; BVCTelephony on top filters
@@ -432,6 +433,8 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             agent=OutboundAssistant(instructions=system_prompt),
             room_input_options=_input_opts,
         )
+    if sip_participant is not None:
+        _session_kwargs["participant"] = sip_participant
 
     await session.start(**_session_kwargs)
     await _log("info", "Agent session started — AI ready, generating greeting")
