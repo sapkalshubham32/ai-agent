@@ -433,9 +433,6 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             agent=OutboundAssistant(instructions=system_prompt),
             room_input_options=_input_opts,
         )
-    if sip_participant is not None:
-        _session_kwargs["participant"] = sip_participant
-
     await session.start(**_session_kwargs)
     await _log("info", "Agent session started — AI ready, generating greeting")
 
