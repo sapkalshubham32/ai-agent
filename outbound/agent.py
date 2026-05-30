@@ -362,6 +362,19 @@ async def entrypoint(ctx: agents.JobContext) -> None:
             ctx.shutdown()
             return
         await _log("info", f"[OUTBOUND] Call ANSWERED — {phone_number} picked up")
+
+        # wait_until_answered=True only confirms SIP 200 OK (signalling layer).
+        # The SIP participant joining the LiveKit room is a separate async event.
+        # We must wait for it here — otherwise session.start() and generate_reply()
+        # fire before the callee's audio track is present, causing a missed greeting.
+        await _log("info", "[OUTBOUND] Waiting for SIP participant to join room...")
+        try:
+            await ctx.wait_for_participant(identity=f"sip_{phone_number}")
+            await _log("info", "[OUTBOUND] SIP participant joined room — starting session")
+        except Exception as _wfp_exc:
+            await _log("error", f"[OUTBOUND] wait_for_participant failed: {_wfp_exc}")
+            ctx.shutdown()
+            return
     else:
         # ── INBOUND: Caller rang one of our VoiceLink DIDs ────────────────────────
         await _log("info", f"[INBOUND] Inbound call received in room: {ctx.room.name}")
