@@ -34,8 +34,8 @@ RUN mkdir -p /data
 # The DB path is set via DB_PATH env var in docker-compose.yml
 ENV DB_PATH=/data/appointments.db
 
-# Expose dashboard port
-EXPOSE 8000
+# Railway injects $PORT at runtime; 8000 is the default for local/Docker Compose
+EXPOSE ${PORT:-8000}
 
 # Start both the FastAPI dashboard server and the LiveKit agent worker
 CMD ["sh", "start.sh"]

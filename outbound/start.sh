@@ -1,5 +1,5 @@
 #!/bin/bash
-# Unified startup script for Coolify deployment
+# Unified startup script for Railway / Coolify / Docker deployment
 # Runs both FastAPI server and LiveKit agent worker in parallel
 
 set -e
@@ -27,9 +27,11 @@ echo "   Gemini: ${GEMINI_MODEL:-gemini-2.0-flash-live-001}"
 echo "   Supabase: ${SUPABASE_URL}"
 echo ""
 
-# Always use port 8000 for FastAPI — LiveKit agent reserves 8081 for its own HTTP server
-echo "🌐 Starting FastAPI server on port 8000..."
-uvicorn server:app --host 0.0.0.0 --port 8000 &
+# Railway injects $PORT; fall back to 8000 for local/Coolify deployments
+# LiveKit agent reserves 8081 for its own HTTP server
+APP_PORT=${PORT:-8000}
+echo "🌐 Starting FastAPI server on port ${APP_PORT}..."
+uvicorn server:app --host 0.0.0.0 --port "${APP_PORT}" &
 SERVER_PID=$!
 
 # Give server time to start
